@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # coding: utf-8
 
 import argparse
@@ -9,7 +9,7 @@ import torch
 import torchaudio
 from torchaudio.transforms import Resample
 
-from datasets import Audio, load_dataset, load_from_disk, concatenate_datasets
+from datasets import Audio, load_dataset, load_from_disk, concatenate_datasets, Dataset, DatasetDict
 from functools import partial
 
 from transformers.models.whisper.tokenization_whisper import TO_LANGUAGE_CODE
@@ -34,8 +34,10 @@ def parse_arguments():
         required=True,
         help="Dataset(s) to train on. Format: dataset_name[:split_name]:text_column",
     )
-    parser.add_argument("--save_processed", action="store_true", help="Save processed dataset for future use")
-    parser.add_argument("--use_preprocessed", action="store_true", help="Use preprocessed dataset for training")
+    parser.add_argument("--save_processed", help="Dataset name to save processed data (will save both train and eval)")
+    parser.add_argument(
+        "--use_preprocessed", help="Dataset name to load preprocessed data from (either local path or remote dataset)"
+    )
     parser.add_argument("--model_name", default="openai/whisper-large-v2", help="Name of the model to train")
     parser.add_argument("--output_model_name", required=True, help="Name of the fine-tuned model to generate")
     parser.add_argument(
@@ -62,7 +64,7 @@ def load_datasets(dataset_specs):
         dataset_name = parts[0]
         split = parts[1] if len(parts) > 2 else "train"
         text_column = parts[-1]
-        dataset = load_dataset(dataset_name, split=split).select(range(10))
+        dataset = load_dataset(dataset_name, split=split)
         datasets.append((dataset, text_column))
     return datasets
 
@@ -168,8 +170,15 @@ def main():
     processor = WhisperProcessor.from_pretrained(args.model_name, language="hebrew", task="transcribe")
 
     if args.use_preprocessed:
-        train_set = load_from_disk("processed_train_set")
-        eval_set = load_from_disk("processed_eval_set")
+        try:
+            # Try to load from disk first
+            dataset_dict = load_from_disk(args.use_preprocessed)
+        except FileNotFoundError:
+            # If not found on disk, try to load as a remote dataset
+            dataset_dict = load_dataset(args.use_preprocessed)
+
+        train_set = dataset_dict["train"]
+        eval_set = dataset_dict["eval"]
     else:
         train_datasets = load_datasets(args.train_datasets)
         eval_datasets = load_datasets([args.eval_dataset])
@@ -178,8 +187,9 @@ def main():
         eval_set = process_datasets(eval_datasets, processor)
 
         if args.save_processed:
-            train_set.save_to_disk("processed_train_set")
-            eval_set.save_to_disk("processed_eval_set")
+            dataset_dict = DatasetDict({"train": train_set, "eval": eval_set})
+            dataset_dict.save_to_disk(args.save_processed)
+            print(f"Preprocessed datasets saved to {args.save_processed}")
 
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 
