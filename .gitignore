@@ -1,0 +1,20 @@
+# Python
+__pycache__
+
+# Visual Studio Code
+.vscode
+
+# Ignore python virtual env folders
+.venv
+env
+venv
+
+# Data Folders
+data
+downloads
+
+# Temporary Scrips
+tmp_*.py
+
+# Local Configuration files
+config/
