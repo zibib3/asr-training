@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # coding: utf-8
 
 import argparse
@@ -95,6 +95,13 @@ def prepare_dataset(example, processor, text_column_name):
         print(f"Exception: {e}")
         return None
 
+def select_legal_entries(processed_dataset):
+    indices = []
+    for idx, e in enumerate(processed_dataset['labels']):
+        if len(e) <= 448:
+            indices.append(idx)
+
+    return processed_dataset.select(indices)
 
 def process_datasets(datasets, processor):
     processed_datasets = []
@@ -102,6 +109,7 @@ def process_datasets(datasets, processor):
         prepare_dataset_func = lambda example: prepare_dataset(example, processor, text_column)
         dataset = dataset.cast_column("audio", Audio(sampling_rate=processor.feature_extractor.sampling_rate))
         processed_dataset = dataset.map(prepare_dataset_func, remove_columns=dataset.column_names, num_proc=1)
+        processed_dataset = select_legal_entries(processed_dataset) 
         processed_datasets.append(processed_dataset)
     return concatenate_datasets(processed_datasets) if len(processed_datasets) > 1 else processed_datasets[0]
 
@@ -206,7 +214,7 @@ def main():
 
     training_args = Seq2SeqTrainingArguments(
         output_dir=args.output_model_name,
-        per_device_train_batch_size=8,
+        per_device_train_batch_size=16,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         learning_rate=args.learning_rate,
         lr_scheduler_type="constant_with_warmup",
