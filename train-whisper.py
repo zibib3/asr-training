@@ -82,10 +82,14 @@ def prepare_dataset(example, processor, text_column_name):
         else:
             resampled_audio_array = audio["array"]
 
+        # Add a space.
+        # Motivation: sometimes post-training models glue words together.
+        text = f' {example[text_column_name]}'
+
         example = processor(
             audio=resampled_audio_array,
             sampling_rate=target_sampling_rate,
-            text=example[text_column_name],
+            text=text,
         )
 
         example["input_length"] = len(resampled_audio_array) / target_sampling_rate
@@ -220,19 +224,20 @@ def main():
         lr_scheduler_type="constant_with_warmup",
         warmup_ratio=args.warmup_ratio,
         warmup_steps=args.warmup_steps,
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
+        evaluation_strategy="steps",
+        save_strategy="steps",
         num_train_epochs=args.num_train_epochs,
         weight_decay=args.weight_decay,
         per_device_eval_batch_size=16,
         predict_with_generate=True,
         generation_max_length=225,
-        logging_strategy="epoch",
-        report_to="none",
+        logging_strategy="steps",
+        report_to="all",
         load_best_model_at_end=True,
         metric_for_best_model="wer",
         greater_is_better=False,
-        push_to_hub=False,
+        push_to_hub=True,
+        hub_model_id=f'ivrit-ai/{args.output_model_name}'
     )
 
     trainer = Seq2SeqTrainer(
