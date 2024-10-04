@@ -30,8 +30,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Train a Whisper model with custom datasets.")
     parser.add_argument(
         "--train_datasets",
-        nargs="+",
-        required=True,
+        nargs="*",
         help="Dataset(s) to train on. Format: dataset_name[:split_name]:text_column",
     )
     parser.add_argument("--save_processed", help="Dataset name to save processed data (will save both train and eval)")
@@ -42,7 +41,6 @@ def parse_arguments():
     parser.add_argument("--output_model_name", required=True, help="Name of the fine-tuned model to generate")
     parser.add_argument(
         "--eval_dataset",
-        required=True,
         help="Reference dataset for evaluation. Format: dataset_name[:split_name]:text_column",
     )
     parser.add_argument("--use_qlora", action="store_true", help="Use QLoRA for training")
@@ -179,6 +177,12 @@ def prepare_model_for_qlora(model):
 def main():
     args = parse_arguments()
 
+    if args.use_preprocessed and (args.train_datasets or args.eval_dataset):
+        raise ValueError("Cannot use both preprocessed data and specify train/eval datasets. Choose one method.")
+
+    if args.use_preprocessed and args.save_processed:
+        raise ValueError("Cannot use preprocessed data and save preprocessed data at the same time.")
+
     processor = WhisperProcessor.from_pretrained(args.model_name, language="hebrew", task="transcribe")
 
     if args.use_preprocessed:
@@ -191,17 +195,29 @@ def main():
 
         train_set = dataset_dict["train"]
         eval_set = dataset_dict["eval"]
-    else:
+    elif args.save_processed:
+        if not args.train_datasets or not args.eval_dataset:
+            raise ValueError("Both --train_datasets and --eval_dataset must be provided when using --save_processed")
+
         train_datasets = load_datasets(args.train_datasets)
         eval_datasets = load_datasets([args.eval_dataset])
 
         train_set = process_datasets(train_datasets, processor)
         eval_set = process_datasets(eval_datasets, processor)
 
-        if args.save_processed:
-            dataset_dict = DatasetDict({"train": train_set, "eval": eval_set})
-            dataset_dict.save_to_disk(args.save_processed)
-            print(f"Preprocessed datasets saved to {args.save_processed}")
+        dataset_dict = DatasetDict({"train": train_set, "eval": eval_set})
+        dataset_dict.save_to_disk(args.save_processed)
+        print(f"Preprocessed datasets saved to {args.save_processed}")
+        return  # Exit after saving preprocessed data
+    else:
+        if not args.train_datasets or not args.eval_dataset:
+            raise ValueError("Both --train_datasets and --eval_dataset must be provided for training")
+
+        train_datasets = load_datasets(args.train_datasets)
+        eval_datasets = load_datasets([args.eval_dataset])
+
+        train_set = process_datasets(train_datasets, processor)
+        eval_set = process_datasets(eval_datasets, processor)
 
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 
@@ -230,7 +246,7 @@ def main():
         weight_decay=args.weight_decay,
         per_device_eval_batch_size=16,
         predict_with_generate=True,
-        generation_max_length=225,
+        generation_max_length=500,
         logging_strategy="steps",
         report_to="all",
         load_best_model_at_end=True,
