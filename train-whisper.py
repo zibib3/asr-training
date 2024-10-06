@@ -52,6 +52,12 @@ def parse_arguments():
         "--gradient_accumulation_steps", type=int, default=2, help="Number of gradient accumulation steps"
     )
     parser.add_argument("--weight_decay", type=float, default=0.05, help="Weight decay")
+    parser.add_argument("--save_steps", type=int, default=500, help="Number of steps between each model save/upload.")
+    parser.add_argument("--max_eval_set_size", type=int, help="Maximum number of entries to fetch from eval dataset.")
+
+    parser.add_argument("--per_device_train_batch_size", type=int, default=16, help="Per-device train batch size.")
+    parser.add_argument("--per_device_eval_batch_size", type=int, default=16, help="Per-device eval batch size.")
+
     return parser.parse_args()
 
 
@@ -219,6 +225,9 @@ def main():
         train_set = process_datasets(train_datasets, processor)
         eval_set = process_datasets(eval_datasets, processor)
 
+    if args.max_eval_set_size:
+        eval_set = eval_set.select(range(args.max_eval_set_size))
+
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 
     metric = evaluate.load("wer")
@@ -234,7 +243,7 @@ def main():
 
     training_args = Seq2SeqTrainingArguments(
         output_dir=args.output_model_name,
-        per_device_train_batch_size=16,
+        per_device_train_batch_size=args.per_device_train_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         learning_rate=args.learning_rate,
         lr_scheduler_type="constant_with_warmup",
@@ -244,12 +253,13 @@ def main():
         save_strategy="steps",
         num_train_epochs=args.num_train_epochs,
         weight_decay=args.weight_decay,
-        per_device_eval_batch_size=16,
+        per_device_eval_batch_size=args.per_device_eval_batch_size,
         predict_with_generate=True,
-        generation_max_length=500,
+        generation_max_length=448,
         logging_strategy="steps",
+        save_steps=500,
         report_to="all",
-        load_best_model_at_end=True,
+        load_best_model_at_end=False,
         metric_for_best_model="wer",
         greater_is_better=False,
         push_to_hub=True,
