@@ -64,7 +64,7 @@ def initialize_model(engine, model_path, tuned_model_path):
         return transcribe
 
     if engine == "faster-whisper":
-        model = faster_whisper.WhisperModel(model_path, device="cuda", compute_type="float32")
+        model = faster_whisper.WhisperModel(model_path, device="cuda")
 
         def transcribe(entry):
             return transcribe_faster_whisper(model, entry)
@@ -223,19 +223,20 @@ def evaluate_model(transcribe_fn, ds, text_column):
     normalizer = whisper.normalizers.BasicTextNormalizer()
 
     ref_texts = []
-    texts = []
+    eval_texts = []
 
     for i in range(len(ds)):
         ref_text = normalizer(ds[i][text_column])
-        text = normalizer(transcribe_fn(ds[i]))
+        eval_text = normalizer(transcribe_fn(ds[i]))
 
         ref_texts.append(ref_text)
-        texts.append(text)
+        eval_texts.append(eval_text)
 
-        if i > 0 and i % 10 == 0:
-            print(f"Evaluated {i}/{len(ds)}, WER={jiwer.wer(texts, ref_texts)}")
+        if i > 0 and i % 1 == 0:
+            res = jiwer.process_words([ref_text], [eval_text])
+            print(f"Evaluated {i}/{len(ds)} entries, WER={res.wer}, WIL={res.wil}")
 
-    return jiwer.wer(texts, ref_texts)
+    return jiwer.process_words(ref_texts, eval_texts)
 
 
 if __name__ == "__main__":
@@ -273,4 +274,6 @@ if __name__ == "__main__":
     ds_text_column = args.text_column
 
     print(f"Beginning evaluation.")
-    evaluate_model(transcribe_fn, ds, ds_text_column)
+    res = evaluate_model(transcribe_fn, ds, ds_text_column)
+
+    print(f"Evaluation done. WER={res.wer}, WIL={res.wil}.")
