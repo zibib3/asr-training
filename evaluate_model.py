@@ -232,9 +232,8 @@ def evaluate_model(transcribe_fn, ds, text_column):
         ref_texts.append(ref_text)
         eval_texts.append(eval_text)
 
-        if i > 0 and i % 1 == 0:
-            res = jiwer.process_words([ref_text], [eval_text])
-            print(f"Evaluated {i}/{len(ds)} entries, WER={res.wer}, WIL={res.wil}")
+        res = jiwer.process_words([ref_text], [eval_text])
+        print(f"Evaluated {i+1}/{len(ds)} entries, WER={res.wer}, WIL={res.wil}")
 
     return jiwer.process_words(ref_texts, eval_texts)
 
@@ -258,10 +257,8 @@ if __name__ == "__main__":
         help="Model to use. Can be remote (e.g. openai/whisper-large-v3) or local (full path).",
     )
     parser.add_argument("--tuned-model", type=str, required=False)
-    parser.add_argument("--dataset", type=str, required=True, help="Dataset to evaluate.")
-    parser.add_argument(
-        "--text-column", type=str, required=True, help="Name of reference transcription column in dataset."
-    )
+    parser.add_argument("--dataset", type=str, required=True, help="Dataset to evaluate in format dataset_name:<split>:<text_column>.")
+    parser.add_argument("--name", type=str, required=False, help="Optional name parameter for dataset.load_dataset.")
 
     # Parse the arguments
     args = parser.parse_args()
@@ -270,8 +267,15 @@ if __name__ == "__main__":
     transcribe_fn = initialize_model(args.engine, args.model, args.tuned_model)
 
     print(f"Loading dataset {args.dataset}...")
-    ds = datasets.load_dataset(args.dataset)["test"]
-    ds_text_column = args.text_column
+    dataset_parts = args.dataset.split(':')
+    dataset_name = dataset_parts[0]
+    dataset_split = dataset_parts[1] if len(dataset_parts) > 1 else "test"
+    ds_text_column = dataset_parts[2] if len(dataset_parts) > 2 else "text"
+
+    if args.name:
+        ds = datasets.load_dataset(dataset_name, name=args.name)[dataset_split]
+    else:
+        ds = datasets.load_dataset(dataset_name)[dataset_split]
 
     print(f"Beginning evaluation.")
     res = evaluate_model(transcribe_fn, ds, ds_text_column)
