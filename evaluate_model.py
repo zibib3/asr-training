@@ -308,7 +308,7 @@ if __name__ == "__main__":
 
     print(f"Evaluation done. WER={metrics.wer}, WIL={metrics.wil}.")
     
-    file_name = f"{args.model.replace("/", "_")}_{dataset_name.replace("/", "_")}_results.csv"
+    file_name = f"{args.model.replace('/', '_')}_{dataset_name.replace('/', '_')}_results.csv"
 
     results_df.to_csv(file_name, encoding='utf-8', index=False)
 
