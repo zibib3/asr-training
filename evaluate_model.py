@@ -16,6 +16,7 @@ import json
 import soundfile
 import numpy
 import pydub
+import pandas
 
 import whisper
 import whisper.normalizers
@@ -224,6 +225,8 @@ def evaluate_model(transcribe_fn, ds, text_column):
 
     ref_texts = []
     eval_texts = []
+    
+    entries_data = []
 
     for i in range(len(ds)):
         ref_text = normalizer(ds[i][text_column])
@@ -232,11 +235,34 @@ def evaluate_model(transcribe_fn, ds, text_column):
         ref_texts.append(ref_text)
         eval_texts.append(eval_text)
 
-        res = jiwer.process_words([ref_text], [eval_text])
-        print(f"Evaluated {i+1}/{len(ds)} entries, WER={res.wer}, WIL={res.wil}")
+        entry_metrics  = jiwer.process_words([ref_text], [eval_text])
 
-    return jiwer.process_words(ref_texts, eval_texts)
+        entry_data = {
+            'entry_id': i,
+            'reference_text': ref_text,
+            'predicted_text': eval_text,
+            'wer': entry_metrics.wer,
+            'wil': entry_metrics.wil,
+            'substitutions': entry_metrics.substitutions,
+            'deletions': entry_metrics.deletions,
+            'insertions': entry_metrics.insertions,
+            'hits': entry_metrics.hits,
+        }
+        for key in ds[i].keys():
+            if key not in ['audio', text_column]:  # Skip audio array and text we already processed
+                entry_data[f'metadata_{key}'] = ds[i][key]
+        
+        entries_data.append(entry_data)
+        print(f"Evaluated {i+1}/{len(ds)} entries, WER={entry_metrics.wer}, WIL={entry_metrics.wil}")
 
+    final_metrics = jiwer.process_words(
+        [entry['reference_text'] for entry in entries_data],
+        [entry['predicted_text'] for entry in entries_data]
+    )
+
+    results_df = pd.DataFrame(entries_data)
+    
+    return final_metrics, results_df
 
 if __name__ == "__main__":
     # Define an argument parser
@@ -278,6 +304,12 @@ if __name__ == "__main__":
         ds = datasets.load_dataset(dataset_name)[dataset_split]
 
     print(f"Beginning evaluation.")
-    res = evaluate_model(transcribe_fn, ds, ds_text_column)
+    metrics, results_df = evaluate_model(transcribe_fn, ds, ds_text_column)
 
-    print(f"Evaluation done. WER={res.wer}, WIL={res.wil}.")
+    print(f"Evaluation done. WER={metrics.wer}, WIL={metrics.wil}.")
+    
+    file_name = f"{args.model.replace("/", "_")}_{dataset_name.replace("/", "_")}_results.csv"
+
+    results_df.to_csv(file_name, encoding='utf-8', index=False)
+
+    print(f"Results saved to {file_name}")
