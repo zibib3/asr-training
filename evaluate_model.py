@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import pickle
 
 import librosa
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
@@ -238,7 +239,7 @@ def evaluate_model(transcribe_fn, ds, text_column):
         entry_metrics  = jiwer.process_words([ref_text], [eval_text])
 
         entry_data = {
-            'entry_id': i,
+            'id': i,
             'reference_text': ref_text,
             'predicted_text': eval_text,
             'wer': entry_metrics.wer,
@@ -285,7 +286,7 @@ if __name__ == "__main__":
     parser.add_argument("--tuned-model", type=str, required=False)
     parser.add_argument("--dataset", type=str, required=True, help="Dataset to evaluate in format dataset_name:<split>:<text_column>.")
     parser.add_argument("--name", type=str, required=False, help="Optional name parameter for dataset.load_dataset.")
-
+    parser.add_argument("--output", type=str, required=False, help="Output CSV file path. If not provided, will use 'evaluation_results.csv'")
     # Parse the arguments
     args = parser.parse_args()
 
@@ -308,8 +309,18 @@ if __name__ == "__main__":
 
     print(f"Evaluation done. WER={metrics.wer}, WIL={metrics.wil}.")
     
-    file_name = f"{args.model.replace('/', '_')}_{dataset_name.replace('/', '_')}_results.csv"
-
-    results_df.to_csv(file_name, encoding='utf-8', index=False)
-
-    print(f"Results saved to {file_name}")
+    # Add model and dataset info as columns 
+    results_df['model'] = args.model
+    results_df['dataset'] = dataset_name
+    results_df['dataset_split'] = dataset_split
+    results_df['engine'] = args.engine
+    
+    output_file = args.output if args.output else "evaluation_results"
+    
+    results_df.to_csv(output_file, encoding='utf-8', index=False)
+    
+    with open(f"{output_file}_metrics.pkl", 'wb') as f:
+        pickle.dump(metrics, f)
+        
+    print(f"Results saved to {output_file}")
+    
