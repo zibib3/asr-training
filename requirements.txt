@@ -20,3 +20,6 @@ scipy
 tqdm
 pydantic
 accelerate
+boto3
+google-cloud-speech
+google-cloud-storage

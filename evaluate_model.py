@@ -6,6 +6,14 @@ import pickle
 import librosa
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 import faster_whisper
+import boto3
+import time
+from google.cloud import speech, storage
+import asyncio
+
+from amazon_transcribe.client import TranscribeStreamingClient
+from amazon_transcribe.handlers import TranscriptResultStreamHandler
+from amazon_transcribe.model import TranscriptEvent
 
 import torch
 
@@ -22,6 +30,12 @@ import pandas
 import whisper
 import whisper.normalizers
 
+import requests
+
+import os
+
+import uuid
+
 # Supported engines and models:
 #
 # 1. Engine: openai-whisper
@@ -30,9 +44,39 @@ import whisper.normalizers
 #    - Models: openai/whisper-large-v2, openai/whisper-large-v3, user-trained models
 # 3. Engine: faster-whisper
 #    - Models: large-v2, large-v3, user-trained models
+# 4. Engine: amazon-transcribe
+#    - Models: batch, stream (uses AWS service)
+# 5. Engine: google-speech
+#    - Models: not applicable (uses Google Cloud service)
 
 
 def initialize_model(engine, model_path, tuned_model_path):
+    if engine == "google-speech":
+        speech_client = speech.SpeechClient()
+        
+        def transcribe(entry):
+            return transcribe_google(speech_client, entry)
+            
+        return transcribe
+
+    if engine == "amazon-transcribe":
+        transcribe_client = boto3.client('transcribe')
+        
+        if model_path == "batch":
+            # Initialize S3 bucket when batch mode is selected
+            s3_client = boto3.client('s3')
+            bucket_name = ensure_transcription_bucket(s3_client)
+            
+            def transcribe(entry):
+                return transcribe_amazon_s3(transcribe_client, s3_client, bucket_name, entry)
+        elif model_path == "stream":
+            def transcribe(entry):
+                return transcribe_amazon(transcribe_client, entry)
+        else:
+            raise ValueError("For amazon-transcribe, model must be 'stream' or 'batch'.")
+
+        return transcribe
+
     if engine == "openai-whisper":
         model = whisper.load_model(model_path)
 
@@ -220,7 +264,6 @@ def transcribe_openai_whisper(model, entry):
 
     return model.transcribe("x.mp3", language="he", beam_size=5, best_of=5)["text"]
 
-
 def evaluate_model(transcribe_fn, ds, text_column):
     normalizer = whisper.normalizers.BasicTextNormalizer()
 
@@ -261,9 +304,216 @@ def evaluate_model(transcribe_fn, ds, text_column):
         [entry['predicted_text'] for entry in entries_data]
     )
 
-    results_df = pd.DataFrame(entries_data)
+    results_df = pandas.DataFrame(entries_data)
     
     return final_metrics, results_df
+
+def transcribe_amazon(transcribe_client, entry):
+    # Convert audio to proper format
+    audio_data = librosa.resample(
+        entry["audio"]["array"], 
+        orig_sr=entry["audio"]["sampling_rate"], 
+        target_sr=16000
+    )
+    
+    # Convert to bytes
+    wav_buffer = io.BytesIO()
+    soundfile.write(
+        wav_buffer, 
+        audio_data, 
+        16000, 
+        format="WAV"
+    )
+    audio_bytes = wav_buffer.getvalue()
+
+    async def process_audio():
+        client = TranscribeStreamingClient(region="us-west-2")
+        
+        stream = await client.start_stream_transcription(
+            language_code="he-IL",
+            media_sample_rate_hz=16000,
+            media_encoding="pcm",
+        )
+
+        # Handle audio chunks
+        async def write_chunks():
+            chunk_size = 1024 * 16
+            for i in range(0, len(audio_bytes), chunk_size):
+                chunk = audio_bytes[i:i+chunk_size]
+                await stream.input_stream.send_audio_event(audio_chunk=chunk)
+            await stream.input_stream.end_stream()
+
+        # Handle transcription results
+        transcript = []
+        class EventHandler(TranscriptResultStreamHandler):
+            async def handle_transcript_event(self, transcript_event: TranscriptEvent):
+                results = transcript_event.transcript.results
+                for result in results:
+                    if not result.is_partial:
+                        for alt in result.alternatives:
+                            transcript.append(alt.transcript)
+
+        # Process audio and get transcription
+        handler = EventHandler(stream.output_stream)
+        await asyncio.gather(write_chunks(), handler.handle_events())
+        
+        return ' '.join(transcript)
+
+    # Run async code
+    return asyncio.run(process_audio())
+
+def transcribe_google(speech_client, entry):
+    # Set GCP API key
+    api_key = ""
+    credentials = storage.Client.from_api_key(api_key)
+    
+    # Convert audio to proper format
+    audio_data = librosa.resample(
+        entry["audio"]["array"], 
+        orig_sr=entry["audio"]["sampling_rate"], 
+        target_sr=16000
+    )
+    
+    # Convert to bytes and save to temporary file
+    temp_filename = f"/tmp/{uuid.uuid4()}.wav"
+    soundfile.write(
+        temp_filename,
+        audio_data, 
+        16000, 
+        format="WAV"
+    )
+    
+    # Upload to GCS using API key auth
+    storage_client = storage.Client(credentials=credentials)
+    bucket_name = "stt-evaluation-audio-bucket"
+    
+    try:
+        bucket = storage_client.get_bucket(bucket_name)
+    except:
+        bucket = storage_client.create_bucket(bucket_name)
+        
+        # Set lifecycle policy to expire objects after 2 days
+        bucket.lifecycle_rules = [{
+            'action': {'type': 'Delete'},
+            'condition': {'age': 2}
+        }]
+        bucket.update()
+
+    blob_name = f"audio/{uuid.uuid4()}.wav"
+    blob = bucket.blob(blob_name)
+    blob.upload_from_filename(temp_filename)
+    
+    # Clean up temp file
+    os.remove(temp_filename)
+    
+    gcs_uri = f"gs://{bucket_name}/{blob_name}"
+    audio = speech.RecognitionAudio(uri=gcs_uri)
+    config = speech.RecognitionConfig(
+        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+        sample_rate_hertz=16000,
+        language_code="he-IL",  # Hebrew
+        model="default"
+    )
+
+    # Use long running recognize with GCS URI and API key auth
+    speech_client = speech.SpeechClient(credentials=credentials)
+    operation = speech_client.long_running_recognize(config=config, audio=audio)
+    
+    # Wait for operation to complete
+    response = operation.result(timeout=90)
+
+    # Clean up GCS file
+    blob.delete()
+
+    # Combine all transcriptions
+    transcript = " ".join(
+        result.alternatives[0].transcript 
+        for result in response.results
+    )
+    
+    return transcript
+
+def ensure_transcription_bucket(s3_client):
+    bucket_name = "stt-evaluation-transcription-bucket"
+    
+    try:
+        s3_client.head_bucket(Bucket=bucket_name)
+    except:
+        # Create the bucket if it doesn't exist
+        s3_client.create_bucket(
+            Bucket=bucket_name,
+            CreateBucketConfiguration={
+                'LocationConstraint': s3_client.meta.region_name
+            }
+        )
+        
+        # Set lifecycle policy to expire objects after 2 days
+        lifecycle_policy = {
+            'Rules': [
+                {
+                    'ID': 'ExpireObjectsAfter2Days',
+                    'Prefix': '',
+                    'Status': 'Enabled',
+                    'Expiration': {
+                        'Days': 2
+                    }
+                }
+            ]
+        }
+        s3_client.put_bucket_lifecycle_configuration(
+            Bucket=bucket_name,
+            LifecycleConfiguration=lifecycle_policy
+        )
+    
+    return bucket_name
+
+def transcribe_amazon_s3(transcribe_client, s3_client, bucket_name, entry):
+    # Convert audio to proper format
+    audio_data = librosa.resample(
+        entry["audio"]["array"], 
+        orig_sr=entry["audio"]["sampling_rate"], 
+        target_sr=16000
+    )
+    
+    # Convert to bytes
+    wav_buffer = io.BytesIO()
+    soundfile.write(
+        wav_buffer, 
+        audio_data, 
+        16000, 
+        format="WAV"
+    )
+    audio_bytes = wav_buffer.getvalue()
+
+    # Upload to existing bucket with unique object key
+    object_key = f"audio/{uuid.uuid4()}.wav"
+    s3_client.put_object(Bucket=bucket_name, Key=object_key, Body=audio_bytes)
+
+    # Start transcription job
+    job_name = f"transcription-job-{uuid.uuid4()}"
+    transcribe_client.start_transcription_job(
+        TranscriptionJobName=job_name,
+        Media={'MediaFileUri': f's3://{bucket_name}/{object_key}'},
+        MediaFormat='wav',
+        LanguageCode='he-IL'
+    )
+
+    # Wait for the job to complete
+    while True:
+        status = transcribe_client.get_transcription_job(TranscriptionJobName=job_name)
+        if status['TranscriptionJob']['TranscriptionJobStatus'] in ['COMPLETED', 'FAILED']:
+            break
+        time.sleep(5)
+
+    # Get the transcription result
+    if status['TranscriptionJob']['TranscriptionJobStatus'] == 'COMPLETED':
+        transcript_uri = status['TranscriptionJob']['Transcript']['TranscriptFileUri']
+        response = requests.get(transcript_uri)
+        transcript = response.json()['results']['transcripts'][0]['transcript']
+        return transcript
+    else:
+        raise Exception("Transcription job failed")
+
 
 if __name__ == "__main__":
     # Define an argument parser
@@ -274,14 +524,21 @@ if __name__ == "__main__":
         "--engine",
         type=str,
         required=True,
-        choices={"openai-whisper", "openai-whisper-tuned", "transformers", "faster-whisper"},
+        choices={
+            "openai-whisper", 
+            "openai-whisper-tuned", 
+            "transformers", 
+            "faster-whisper", 
+            "amazon-transcribe",
+            "google-speech"
+        },
         help="Engine to use.",
     )
     parser.add_argument(
         "--model",
         type=str,
         required=True,
-        help="Model to use. Can be remote (e.g. openai/whisper-large-v3) or local (full path).",
+        help="Model to use. Can be remote (e.g. openai/whisper-large-v3) or local (full path). For amazon-transcribe, use 'stream' or 'batch'.",
     )
     parser.add_argument("--tuned-model", type=str, required=False)
     parser.add_argument("--dataset", type=str, required=True, help="Dataset to evaluate in format dataset_name:<split>:<text_column>.")
@@ -323,4 +580,3 @@ if __name__ == "__main__":
         pickle.dump(metrics, f)
         
     print(f"Results saved to {output_file}")
-    
