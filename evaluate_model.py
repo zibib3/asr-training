@@ -37,6 +37,8 @@ import os
 
 import uuid
 
+from hebrew import Hebrew
+
 # Supported engines and models:
 #
 # 1. Engine: openai-whisper
@@ -50,6 +52,9 @@ import uuid
 # 5. Engine: google-speech
 #    - Models: not applicable (uses Google Cloud service)
 
+def remove_niqqud(text:str):
+    """Remove niqqud from Hebrew text."""
+    return Hebrew(text).no_niqqud().string
 
 def initialize_model(engine, model_path, tuned_model_path):
     if engine == "google-speech":
@@ -274,7 +279,7 @@ def evaluate_model(transcribe_fn, ds, text_column):
     entries_data = []
 
     for i in range(len(ds)):
-        ref_text = normalizer(ds[i][text_column])
+        ref_text = normalizer(remove_niqqud(ds[i][text_column]))
         eval_text = normalizer(transcribe_fn(ds[i]))
 
         ref_texts.append(ref_text)
