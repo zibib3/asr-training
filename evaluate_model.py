@@ -16,6 +16,7 @@ from amazon_transcribe.handlers import TranscriptResultStreamHandler
 from amazon_transcribe.model import TranscriptEvent
 
 import torch
+import concurrent.futures
 
 import io
 import datasets
@@ -270,41 +271,49 @@ def transcribe_openai_whisper(model, entry):
 
     return model.transcribe("x.mp3", language="he", beam_size=5, best_of=5)["text"]
 
-def evaluate_model(transcribe_fn, ds, text_column):
-    normalizer = whisper.normalizers.BasicTextNormalizer()
+def process_entry(args):
+    i, entry, transcribe_fn, text_column, normalizer = args
 
-    ref_texts = []
-    eval_texts = []
+    ref_text = normalizer(remove_niqqud(entry[text_column]))
+    eval_text = normalizer(transcribe_fn(entry))
+
+    entry_metrics = jiwer.process_words([ref_text], [eval_text])
+
+    entry_data = {
+        'id': i,
+        'reference_text': ref_text,
+        'predicted_text': eval_text,
+        'wer': entry_metrics.wer,
+        'wil': entry_metrics.wil,
+        'substitutions': entry_metrics.substitutions,
+        'deletions': entry_metrics.deletions,
+        'insertions': entry_metrics.insertions,
+        'hits': entry_metrics.hits,
+    }
+
+    for key in entry.keys():
+        if key not in ['audio', text_column]:
+            entry_data[f'metadata_{key}'] = entry[key]
+
+    print(f"Evaluated entry {i+1}, WER={entry_metrics.wer}, WIL={entry_metrics.wil}, ref_text={ref_text}, eval_text={eval_text}")
+    return entry_data
+
+def evaluate_model(transcribe_fn, ds, text_column, num_workers=1):
+    normalizer = whisper.normalizers.BasicTextNormalizer()
     
     entries_data = []
+    
+    # Prepare arguments for parallel processing
+    process_args = [(i, ds[i], transcribe_fn, text_column, normalizer) for i in range(len(ds))]
+    
+    # Process entries in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
+        entries_data = list(executor.map(process_entry, process_args))
+    
+    # Sort results by ID to maintain original order
+    entries_data.sort(key=lambda x: x['id'])
 
-    for i in range(len(ds)):
-        ref_text = normalizer(remove_niqqud(ds[i][text_column]))
-        eval_text = normalizer(transcribe_fn(ds[i]))
-
-        ref_texts.append(ref_text)
-        eval_texts.append(eval_text)
-
-        entry_metrics  = jiwer.process_words([ref_text], [eval_text])
-
-        entry_data = {
-            'id': i,
-            'reference_text': ref_text,
-            'predicted_text': eval_text,
-            'wer': entry_metrics.wer,
-            'wil': entry_metrics.wil,
-            'substitutions': entry_metrics.substitutions,
-            'deletions': entry_metrics.deletions,
-            'insertions': entry_metrics.insertions,
-            'hits': entry_metrics.hits,
-        }
-        for key in ds[i].keys():
-            if key not in ['audio', text_column]:  # Skip audio array and text we already processed
-                entry_data[f'metadata_{key}'] = ds[i][key]
-        
-        entries_data.append(entry_data)
-        print(f"Evaluated {i+1}/{len(ds)} entries, WER={entry_metrics.wer}, WIL={entry_metrics.wil}")
-
+    # Calculate final metrics
     final_metrics = jiwer.process_words(
         [entry['reference_text'] for entry in entries_data],
         [entry['predicted_text'] for entry in entries_data]
@@ -322,6 +331,10 @@ def transcribe_amazon(transcribe_client, entry):
         target_sr=16000
     )
     
+    audio_length = len(audio_data) / 16000
+    if audio_length < 0.5:
+        return ''
+
     # Convert to bytes
     wav_buffer = io.BytesIO()
     soundfile.write(
@@ -480,7 +493,11 @@ def transcribe_amazon_s3(transcribe_client, s3_client, bucket_name, entry):
         orig_sr=entry["audio"]["sampling_rate"], 
         target_sr=16000
     )
-    
+   
+    audio_length = len(audio_data) / 16000
+    if audio_length < 0.5:
+        return '' 
+ 
     # Convert to bytes
     wav_buffer = io.BytesIO()
     soundfile.write(
@@ -518,7 +535,8 @@ def transcribe_amazon_s3(transcribe_client, s3_client, bucket_name, entry):
         transcript = response.json()['results']['transcripts'][0]['transcript']
         return transcript
     else:
-        raise Exception("Transcription job failed")
+        print(status)
+        raise Exception(f"Transcription job failed for entry {entry}")
 
 
 if __name__ == "__main__":
@@ -550,6 +568,8 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, required=True, help="Dataset to evaluate in format dataset_name:<split>:<text_column>.")
     parser.add_argument("--name", type=str, required=False, help="Optional name parameter for dataset.load_dataset.")
     parser.add_argument("--output", type=str, required=False, default="evaluation_results.csv", help="Output CSV file path. If not provided, will use 'evaluation_results.csv'")
+    parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers to use for evaluation")
+
     # Parse the arguments
     args = parser.parse_args()
 
@@ -567,8 +587,8 @@ if __name__ == "__main__":
     else:
         ds = datasets.load_dataset(dataset_name)[dataset_split]
 
-    print(f"Beginning evaluation.")
-    metrics, results_df = evaluate_model(transcribe_fn, ds, ds_text_column)
+    print(f"Beginning evaluation with {args.workers} workers.")
+    metrics, results_df = evaluate_model(transcribe_fn, ds, ds_text_column, args.workers)
 
     print(f"Evaluation done. WER={metrics.wer}, WIL={metrics.wil}.")
     
