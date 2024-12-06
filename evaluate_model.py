@@ -21,6 +21,7 @@ import io
 import datasets
 import jiwer
 import json
+import pandas as pd
 
 import soundfile
 import numpy
@@ -543,7 +544,7 @@ if __name__ == "__main__":
     parser.add_argument("--tuned-model", type=str, required=False)
     parser.add_argument("--dataset", type=str, required=True, help="Dataset to evaluate in format dataset_name:<split>:<text_column>.")
     parser.add_argument("--name", type=str, required=False, help="Optional name parameter for dataset.load_dataset.")
-    parser.add_argument("--output", type=str, required=False, help="Output CSV file path. If not provided, will use 'evaluation_results.csv'")
+    parser.add_argument("--output", type=str, required=False, default="evaluation_results.csv", help="Output CSV file path. If not provided, will use 'evaluation_results.csv'")
     # Parse the arguments
     args = parser.parse_args()
 
@@ -572,11 +573,8 @@ if __name__ == "__main__":
     results_df['dataset_split'] = dataset_split
     results_df['engine'] = args.engine
     
-    output_file = args.output if args.output else "evaluation_results"
+    output_file = args.output 
     
     results_df.to_csv(output_file, encoding='utf-8', index=False)
     
-    with open(f"{output_file}_metrics.pkl", 'wb') as f:
-        pickle.dump(metrics, f)
-        
     print(f"Results saved to {output_file}")
