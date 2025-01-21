@@ -88,7 +88,7 @@ def prepare_dataset(example, processor, text_column_name):
 
         # Add a space.
         # Motivation: sometimes post-training models glue words together.
-        text = f' {example[text_column_name]}'
+        text = f" {example[text_column_name]}"
 
         example = processor(
             audio=resampled_audio_array,
@@ -103,13 +103,15 @@ def prepare_dataset(example, processor, text_column_name):
         print(f"Exception: {e}")
         return None
 
+
 def select_legal_entries(processed_dataset):
     indices = []
-    for idx, e in enumerate(processed_dataset['labels']):
+    for idx, e in enumerate(processed_dataset["labels"]):
         if len(e) <= 448:
             indices.append(idx)
 
     return processed_dataset.select(indices)
+
 
 def process_datasets(datasets, processor):
     processed_datasets = []
@@ -117,7 +119,7 @@ def process_datasets(datasets, processor):
         prepare_dataset_func = lambda example: prepare_dataset(example, processor, text_column)
         dataset = dataset.cast_column("audio", Audio(sampling_rate=processor.feature_extractor.sampling_rate))
         processed_dataset = dataset.map(prepare_dataset_func, remove_columns=dataset.column_names, num_proc=1)
-        processed_dataset = select_legal_entries(processed_dataset) 
+        processed_dataset = select_legal_entries(processed_dataset)
         processed_datasets.append(processed_dataset)
     return concatenate_datasets(processed_datasets) if len(processed_datasets) > 1 else processed_datasets[0]
 
@@ -263,7 +265,7 @@ def main():
         metric_for_best_model="wer",
         greater_is_better=False,
         push_to_hub=True,
-        hub_model_id=f'ivrit-ai/{args.output_model_name}'
+        hub_model_id=f"ivrit-ai/{args.output_model_name}",
     )
 
     trainer = Seq2SeqTrainer(
