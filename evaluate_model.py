@@ -39,6 +39,8 @@ import os
 import uuid
 
 from hebrew import Hebrew
+import runpod
+import base64
 
 # Supported engines and models:
 #
@@ -52,6 +54,7 @@ from hebrew import Hebrew
 #    - Models: batch, stream (uses AWS service)
 # 5. Engine: google-speech
 #    - Models: not applicable (uses Google Cloud service)
+# 6. Engine: runpod:faster-whisper
 
 
 def remove_niqqud(text: str):
@@ -126,6 +129,16 @@ def initialize_model(engine, model_path, tuned_model_path):
 
         def transcribe(entry):
             return transcribe_faster_whisper(model, entry)
+
+        return transcribe
+
+    if engine == "runpod:faster-whisper":
+        # Initialize runpod with API key
+        runpod.api_key = os.environ["RUNPOD_API_KEY"]
+        endpoint = runpod.Endpoint(os.environ["RUNPOD_ENDPOINT"])
+
+        def transcribe(entry):
+            return transcribe_runpod_faster_whisper(endpoint, model_path, entry)
 
         return transcribe
 
@@ -518,6 +531,34 @@ def transcribe_amazon_s3(transcribe_client, s3_client, bucket_name, entry):
         raise Exception(f"Transcription job failed for entry {entry}")
 
 
+def transcribe_runpod_faster_whisper(endpoint, model, entry):
+    # Convert audio to MP3 format
+    wav_buffer = io.BytesIO()
+    soundfile.write(wav_buffer, entry["audio"]["array"], entry["audio"]["sampling_rate"], format="WAV")
+    wav_buffer.seek(0)
+
+    # Convert WAV to MP3
+    audio = pydub.AudioSegment.from_file(wav_buffer, format="wav")
+    mp3_buffer = io.BytesIO()
+    audio.export(mp3_buffer, format="mp3")
+    mp3_data = mp3_buffer.getvalue()
+
+    # Encode MP3 data to base64
+    data = base64.b64encode(mp3_data).decode("utf-8")
+
+    # Prepare payload
+    payload = {"type": "blob", "data": data, "model": model}
+
+    # Call runpod endpoint
+    try:
+        result = endpoint.run_sync(payload)
+        texts = [e["text"] for e in result[0]["result"]]
+        return "".join(texts)
+    except Exception as e:
+        print(f"Exception calling runpod: {e}")
+        return ""
+
+
 if __name__ == "__main__":
     # Define an argument parser
     parser = argparse.ArgumentParser(description="Create a dataset and upload to Huggingface.")
@@ -534,6 +575,7 @@ if __name__ == "__main__":
             "faster-whisper",
             "amazon-transcribe",
             "google-speech",
+            "runpod:faster-whisper",
         },
         help="Engine to use.",
     )
