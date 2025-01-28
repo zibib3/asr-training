@@ -553,10 +553,10 @@ def transcribe_runpod_faster_whisper(endpoint, model, entry):
     try:
         result = endpoint.run_sync(payload)
         texts = [e["text"] for e in result[0]["result"]]
-        return "".join(texts)
+        return " ".join(texts)
     except Exception as e:
         print(f"Exception calling runpod: {e}")
-        return ""
+        raise e
 
 
 if __name__ == "__main__":
