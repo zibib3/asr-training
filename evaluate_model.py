@@ -612,9 +612,9 @@ if __name__ == "__main__":
     ds_text_column = dataset_parts[2] if len(dataset_parts) > 2 else "text"
 
     if args.name:
-        ds = datasets.load_dataset(dataset_name, name=args.name)[dataset_split]
+        ds = datasets.load_dataset(dataset_name, name=args.name, trust_remote_code=True)[dataset_split]
     else:
-        ds = datasets.load_dataset(dataset_name)[dataset_split]
+        ds = datasets.load_dataset(dataset_name, trust_remote_code=True)[dataset_split]
 
     print(f"Beginning evaluation with {args.workers} workers.")
     metrics, results_df = evaluate_model(transcribe_fn, ds, ds_text_column, args.workers)
