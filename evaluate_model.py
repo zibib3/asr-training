@@ -69,12 +69,15 @@ def process_entry(args):
 
     return entry_data
 
+
 def calculate_final_metrics(entries_data: list[dict]):
     # Calculate final metrics
-    return jiwer.process_words(
+    results = jiwer.process_words(
         [entry["norm_reference_text"] for entry in entries_data],
         [entry["norm_predicted_text"] for entry in entries_data],
     )
+    return results
+
 
 def evaluate_model(transcribe_fn, ds, text_column, num_workers=1):
     normalizer = HebrewTextNormalizer()
@@ -98,8 +101,6 @@ def evaluate_model(transcribe_fn, ds, text_column, num_workers=1):
                 last_wil = entry["wil"]
                 pbar.set_postfix(last_wer=f"{last_wer:.5f}", last_wil=f"{last_wil:.5f}")
                 pbar.update(1)
-        
-        entries_data = list(executor.map(process_entry, process_args))
 
     # Sort results by ID to maintain original order
     entries_data.sort(key=lambda x: x["id"])
@@ -109,6 +110,7 @@ def evaluate_model(transcribe_fn, ds, text_column, num_workers=1):
 
     results_df = pandas.DataFrame(entries_data)
     return final_metrics, results_df
+
 
 def reevaluate_model_results_file(results_csv_file: str):
     # get df from csv file
@@ -121,6 +123,7 @@ def reevaluate_model_results_file(results_csv_file: str):
     entries_data = df.to_dict(orient="records")
 
     return calculate_final_metrics(entries_data)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate a speech-to-text model.")
@@ -173,5 +176,5 @@ if __name__ == "__main__":
 
         results_df.to_csv(args.output, encoding="utf-8", index=False)
         print(f"Results saved to {args.output}")
-    
+
     print(f"Evaluation done. WER={metrics.wer}, WIL={metrics.wil}.")
