@@ -37,9 +37,11 @@ def main():
     for ds_path, ds_name, ds_output_name in datasets:
         output_file = os.path.join(args.output_dir, f"{ds_output_name}.csv")
 
-        if os.path.exists(output_file) and not args.overwrite:
-            print(f"Skipping {ds_path} - output file {output_file} already exists")
-            continue
+        reevaluate_existing = False
+        if os.path.exists(output_file):
+            if not args.overwrite:
+                reevaluate_existing = True
+                print(f"Reevaluating exiting results in {ds_path}.")
 
         print(f"Evaluating {ds_path}...")
 
@@ -57,6 +59,8 @@ def main():
             output_file,
         ]
 
+        if reevaluate_existing:
+            cmd.append("--reevaluate_existing")
         if ds_name:
             cmd.extend(["--name", ds_name])
 
