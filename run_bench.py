@@ -13,7 +13,7 @@ def main():
     parser.add_argument("--model", required=True, help="Model to use")
     parser.add_argument("--output-dir", required=True, help="Directory to store evaluation results")
     parser.add_argument("--workers", type=int, default=8, help="Number of parallel workers")
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing output files")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing output files if exists")
     args = parser.parse_args()
 
     # Ensure engine script exists
@@ -37,12 +37,6 @@ def main():
     for ds_path, ds_name, ds_output_name in datasets:
         output_file = os.path.join(args.output_dir, f"{ds_output_name}.csv")
 
-        reevaluate_existing = False
-        if os.path.exists(output_file):
-            if not args.overwrite:
-                reevaluate_existing = True
-                print(f"Reevaluating exiting results in {ds_path}.")
-
         print(f"Evaluating {ds_path}...")
 
         cmd = [
@@ -57,10 +51,10 @@ def main():
             str(args.workers),
             "--output",
             output_file,
+            "--overwrite",
+            args.overwrite
         ]
 
-        if reevaluate_existing:
-            cmd.append("--reevaluate_existing")
         if ds_name:
             cmd.extend(["--name", ds_name])
 

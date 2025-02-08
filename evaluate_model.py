@@ -2,6 +2,7 @@
 
 import argparse
 import concurrent.futures
+import os
 
 import datasets
 import jiwer
@@ -135,13 +136,13 @@ if __name__ == "__main__":
     parser.add_argument("--name", type=str, required=False, help="Optional name parameter for dataset.load_dataset")
     parser.add_argument("--output", type=str, default="evaluation_results.csv", help="Output CSV file path")
     parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers to use for evaluation")
-    parser.add_argument(
-        "--reevaluate_existing", action="store_true", help="Reevaluate existing results file instead of evaluating"
-    )
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite exists outputs, otherwise - reuse them")
 
     args = parser.parse_args()
 
-    if args.reevaluate_existing:
+    output_exists = os.path.exists(args.output)
+
+    if output_exists and not args.overwrite:
         metrics = reevaluate_model_results_file(args.output)
     else:
         # Import the engine module
