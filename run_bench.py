@@ -50,11 +50,11 @@ def main():
             "--workers",
             str(args.workers),
             "--output",
-            output_file,
-            "--overwrite",
-            args.overwrite
+            output_file
         ]
 
+        if args.overwrite:
+            cmd.append("--overwrite")
         if ds_name:
             cmd.extend(["--name", ds_name])
 
