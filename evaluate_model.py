@@ -71,14 +71,23 @@ def process_entry(args):
     return entry_data
 
 
-def calculate_final_metrics(entries_data: list[dict]):
+def calculate_final_metrics(df: pandas.DataFrame):
+    df = df.sort_values(by=["id"])
+    df["reference_text"] = df["reference_text"].fillna("")
+    df["predicted_text"] = df["predicted_text"].fillna("")
+
+    # convert to list of dicts
+    entries_data = df.to_dict(orient="records")
+
+    htn = HebrewTextNormalizer()
+
     # Calculate final metrics
     results = jiwer.process_words(
-        [entry["norm_reference_text"] for entry in entries_data],
-        [entry["norm_predicted_text"] for entry in entries_data],
+        [htn(entry["reference_text"]) for entry in entries_data],
+        [htn(entry["predicted_text"]) for entry in entries_data],
     )
-    return results
 
+    return results
 
 def evaluate_model(transcribe_fn, ds, text_column, num_workers=1):
     normalizer = HebrewTextNormalizer()
@@ -106,25 +115,7 @@ def evaluate_model(transcribe_fn, ds, text_column, num_workers=1):
     # Sort results by ID to maintain original order
     entries_data.sort(key=lambda x: x["id"])
 
-    # Calculate final metrics
-    final_metrics = calculate_final_metrics(entries_data)
-
-    results_df = pandas.DataFrame(entries_data)
-    return final_metrics, results_df
-
-
-def reevaluate_model_results_file(results_csv_file: str):
-    # get df from csv file
-    df = pandas.read_csv(results_csv_file)
-
-    # srt by id column
-    df = df.sort_values(by=["id"])
-
-    # convert to list of dicts
-    entries_data = df.to_dict(orient="records")
-
-    return calculate_final_metrics(entries_data)
-
+    return pandas.DataFrame(entries_data)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate a speech-to-text model.")
@@ -143,7 +134,7 @@ if __name__ == "__main__":
     output_exists = os.path.exists(args.output)
 
     if output_exists and not args.overwrite:
-        metrics = reevaluate_model_results_file(args.output)
+        results_df = pandas.read_csv(args.output)
     else:
         # Import the engine module
         import importlib.util
@@ -167,7 +158,7 @@ if __name__ == "__main__":
             ds = datasets.load_dataset(dataset_name, trust_remote_code=True)[dataset_split]
 
         print(f"Beginning evaluation with {args.workers} workers.")
-        metrics, results_df = evaluate_model(transcribe_fn, ds, ds_text_column, args.workers)
+        results_df = evaluate_model(transcribe_fn, ds, ds_text_column, args.workers)
 
         # Add model and dataset info as columns
         results_df["model"] = args.model
@@ -177,5 +168,8 @@ if __name__ == "__main__":
 
         results_df.to_csv(args.output, encoding="utf-8", index=False)
         print(f"Results saved to {args.output}")
+
+    # Calculate final metrics
+    metrics = calculate_final_metrics(results_df)
 
     print(f"Evaluation done. WER={metrics.wer}, WIL={metrics.wil}.")
