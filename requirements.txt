@@ -1,3 +1,8 @@
+audiosample==2.2.6
+# The below version fixes an incompatibility in AudioSample
+# If this is nto fixed soon - ditch AudioSample which is probably
+# not mature enough for production
+av>=12.3.0,<14
 bitsandbytes
 datasets
 faster-whisper
@@ -27,3 +32,4 @@ google-cloud-storage
 amazon-transcribe
 hebrew
 runpod
+stable_ts==2.18.3
