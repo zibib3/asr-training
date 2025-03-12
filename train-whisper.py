@@ -43,7 +43,7 @@ def load_datasets(dataset_specs):
         split = parts[1] if len(parts) == 2 else "train"
 
         if isdir(dataset_name):
-            dataset = load_from_disk(dataset_name, split=split)
+            dataset = load_from_disk(dataset_name)
         else:
             dataset = load_dataset(dataset_name, split=split)
         datasets.append(dataset)
