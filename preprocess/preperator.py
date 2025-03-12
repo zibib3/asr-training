@@ -244,7 +244,8 @@ class DatasetPreparator:
 
             # Calculate how many prev_ids we want to take
             max_prev_ids_len_to_take = min(
-                whisper_max_target_positions - len(token_ids)
+                whisper_max_target_positions
+                - len(token_ids)
                 # 3 - Prefix for transcription (sot+lang+task)
                 # 1 - eot token
                 # 1 - Prefix for prev (prev)
