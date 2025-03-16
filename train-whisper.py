@@ -217,6 +217,7 @@ def parse_arguments():
         "--ds_processor_proc_num", type=int, default=1, help="Number of parallel processors for datasets preparation"
     )
     parser.add_argument("--model_name", default="openai/whisper-large-v2", help="Name of the model to train")
+    parser.add_argument("--output_dir", default=None, help="Directory to store the new model.")
     parser.add_argument("--output_model_name", required=True, help="Name of the fine-tuned model to generate")
     parser.add_argument("--hf_org_name", default="ivrit-ai", help="Name of HF Org to push the model to")
     parser.add_argument("--skip_push_to_hub", action="store_true", help="Don't push result model to hub")
@@ -393,8 +394,13 @@ def main():
 
     model.generate = partial(model.generate, language="hebrew", task="transcribe", use_cache=True)
 
+    if args.output_dir is None:
+        output_dir = args.output_model_name
+    else:
+        output_dir = args.output_dir
+
     training_args = Seq2SeqTrainingArguments(
-        output_dir=args.output_model_name,
+        output_dir=args.output_dir,
         per_device_train_batch_size=args.per_device_train_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         learning_rate=args.learning_rate,
